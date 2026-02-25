@@ -1,0 +1,195 @@
+import discord
+from discord.ext import commands
+from discord.ui import View, Select, Button
+import sqlite3
+import os
+import datetime
+
+intents = discord.Intents.default()
+intents.message_content = True
+
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+# ===== CONFIGURACIÓN =====
+CANAL_TURNOS = 1472964421201428571
+ROL_ADMIN_ID = 1381740760717852702
+# =========================
+
+# ===== BASE DE DATOS =====
+conn = sqlite3.connect("hospital.db")
+cursor = conn.cursor()
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS departamentos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre TEXT UNIQUE
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS medicos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre TEXT,
+    departamento TEXT
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS turnos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    paciente TEXT,
+    motivo TEXT,
+    departamento TEXT,
+    medico TEXT,
+    estado TEXT,
+    fecha TEXT
+)
+""")
+
+conn.commit()
+# ==========================
+
+
+# ===============================
+# PANEL SOLICITUD CON DEPARTAMENTOS
+# ===============================
+class PanelSolicitud(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+        cursor.execute("SELECT nombre FROM departamentos")
+        departamentos = cursor.fetchall()
+
+        options = []
+        for dep in departamentos:
+            options.append(discord.SelectOption(label=dep[0]))
+
+        if options:
+            self.add_item(DepartamentoSelect(options))
+
+
+class DepartamentoSelect(Select):
+    def __init__(self, options):
+        super().__init__(placeholder="Selecciona departamento", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        departamento = self.values[0]
+
+        await interaction.response.send_message("👤 Nombre del paciente:", ephemeral=True)
+
+        def check(m):
+            return m.author == interaction.user
+
+        nombre = await bot.wait_for("message", check=check)
+
+        await interaction.followup.send("🩺 Motivo:", ephemeral=True)
+        motivo = await bot.wait_for("message", check=check)
+
+        fecha = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        estado = "🟡 Pendiente"
+
+        cursor.execute("""
+        INSERT INTO turnos (paciente, motivo, departamento, medico, estado, fecha)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """, (nombre.content, motivo.content, departamento, "Sin asignar", estado, fecha))
+        conn.commit()
+
+        turno_id = cursor.lastrowid
+        canal = bot.get_channel(CANAL_TURNOS)
+
+        embed = discord.Embed(title=f"📋 TURNO #{turno_id}", color=discord.Color.orange())
+        embed.add_field(name="Paciente", value=nombre.content, inline=False)
+        embed.add_field(name="Motivo", value=motivo.content, inline=False)
+        embed.add_field(name="Departamento", value=departamento, inline=False)
+        embed.add_field(name="Médico", value="Sin asignar", inline=False)
+        embed.add_field(name="Estado", value=estado, inline=False)
+
+        await canal.send(embed=embed, view=AdminTurnoView(turno_id))
+        await interaction.followup.send("✅ Turno creado.", ephemeral=True)
+
+
+# ===============================
+# PANEL ADMINISTRATIVO DEL TURNO
+# ===============================
+class AdminTurnoView(View):
+    def __init__(self, turno_id):
+        super().__init__(timeout=None)
+        self.turno_id = turno_id
+
+    async def interaction_check(self, interaction: discord.Interaction):
+        if ROL_ADMIN_ID not in [r.id for r in interaction.user.roles]:
+            await interaction.response.send_message("❌ Solo administración.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Asignar Médico", style=discord.ButtonStyle.primary)
+    async def asignar(self, interaction: discord.Interaction, button: Button):
+
+        cursor.execute("SELECT nombre FROM medicos")
+        medicos = cursor.fetchall()
+
+        options = [discord.SelectOption(label=m[0]) for m in medicos]
+
+        view = View()
+        select = Select(placeholder="Selecciona médico", options=options)
+
+        async def seleccionar(i):
+            medico = select.values[0]
+            cursor.execute("UPDATE turnos SET medico=? WHERE id=?", (medico, self.turno_id))
+            conn.commit()
+
+            embed = interaction.message.embeds[0]
+            embed.set_field_at(3, name="Médico", value=medico, inline=False)
+            await interaction.message.edit(embed=embed)
+            await i.response.send_message("Médico asignado.", ephemeral=True)
+
+        select.callback = seleccionar
+        view.add_item(select)
+
+        await interaction.response.send_message("Selecciona médico:", view=view, ephemeral=True)
+
+    @discord.ui.button(label="Aprobar", style=discord.ButtonStyle.success)
+    async def aprobar(self, interaction: discord.Interaction, button: Button):
+        cursor.execute("UPDATE turnos SET estado='🟢 Aprobado' WHERE id=?", (self.turno_id,))
+        conn.commit()
+
+        embed = interaction.message.embeds[0]
+        embed.set_field_at(4, name="Estado", value="🟢 Aprobado", inline=False)
+        await interaction.message.edit(embed=embed)
+        await interaction.response.send_message("Turno aprobado.", ephemeral=True)
+
+
+# ===============================
+# COMANDOS ADMIN
+# ===============================
+@bot.command()
+async def crear_departamento(ctx, *, nombre):
+    cursor.execute("INSERT OR IGNORE INTO departamentos (nombre) VALUES (?)", (nombre,))
+    conn.commit()
+    await ctx.send(f"Departamento {nombre} creado.")
+
+
+@bot.command()
+async def crear_medico(ctx, nombre, *, departamento):
+    cursor.execute("INSERT INTO medicos (nombre, departamento) VALUES (?, ?)", (nombre, departamento))
+    conn.commit()
+    await ctx.send(f"Médico {nombre} agregado a {departamento}.")
+
+
+@bot.command()
+async def panel(ctx):
+    embed = discord.Embed(
+        title="🏥 Solicitud de Turno",
+        description="Selecciona el departamento.",
+        color=discord.Color.blue()
+    )
+    await ctx.send(embed=embed, view=PanelSolicitud())
+
+
+@bot.event
+async def on_ready():
+    print(f"Sistema corporativo activo como {bot.user}")
+    bot.add_view(PanelSolicitud())
+
+
+bot.run(os.getenv("TOKEN"))
