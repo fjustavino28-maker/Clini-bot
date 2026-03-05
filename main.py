@@ -3,6 +3,68 @@ from discord.ext import commands, tasks
 import sqlite3
 from datetime import datetime
 
+# ---------------------------
+# Configura aquí los IDs de los roles
+# ---------------------------
+ROLE_IDS = {
+    "presidente": 1476456408122921112,       # Reemplaza con el ID real del rol Presidente
+    "director_general": 1472649840583381189,  # Reemplaza con el ID real del rol Director Médico
+    "medico": 1471976001767473212,           # Reemplaza con el ID real del rol Médico
+}
+
+# ---------------------------
+# Comando para asignar rol por ID
+# ---------------------------
+@bot.command()
+async def asignar_rol_id(ctx, miembro: discord.Member, rol: str):
+    # Solo presidente puede asignar roles
+    if ROLE_IDS["presidente"] not in [r.id for r in ctx.author.roles]:
+        await ctx.send("Solo el Presidente puede asignar roles.")
+        return
+
+    if rol not in ROLE_IDS:
+        await ctx.send("Rol inválido. Usa: presidente, director_medico, medico")
+        return
+
+    role_obj = ctx.guild.get_role(ROLE_IDS[rol])
+    if role_obj in miembro.roles:
+        await ctx.send(f"{miembro.name} ya tiene el rol {rol}.")
+        return
+
+    await miembro.add_roles(role_obj)
+    await ctx.send(f"Rol **{rol}** asignado a {miembro.name}.")
+
+# ---------------------------
+# Comando para quitar rol por ID
+# ---------------------------
+@bot.command()
+async def quitar_rol_id(ctx, miembro: discord.Member, rol: str):
+    # Solo presidente puede quitar roles
+    if ROLE_IDS["presidente"] not in [r.id for r in ctx.author.roles]:
+        await ctx.send("Solo el Presidente puede quitar roles.")
+        return
+
+    if rol not in ROLE_IDS:
+        await ctx.send("Rol inválido. Usa: presidente, director_medico, medico")
+        return
+
+    role_obj = ctx.guild.get_role(ROLE_IDS[rol])
+    if role_obj not in miembro.roles:
+        await ctx.send(f"{miembro.name} no tiene el rol {rol}.")
+        return
+
+    await miembro.remove_roles(role_obj)
+    await ctx.send(f"Rol **{rol}** quitado a {miembro.name}.")
+
+# ---------------------------
+# Comando para listar roles de un miembro
+# ---------------------------
+@bot.command()
+async def mis_roles(ctx, miembro: discord.Member = None):
+    miembro = miembro or ctx.author
+    roles = [r.name for r in miembro.roles if r.id in ROLE_IDS.values()]
+    await ctx.send(f"{miembro.name} tiene los roles: {', '.join(roles) if roles else 'ninguno'}")
+
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
