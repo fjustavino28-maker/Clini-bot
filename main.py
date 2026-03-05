@@ -18,12 +18,12 @@ ROLE_IDS = {
 @bot.command()
 async def asignar_rol_id(ctx, miembro: discord.Member, rol: str):
     # Solo presidente puede asignar roles
-    if ROLE_IDS["presidente"] not in [r.id for r in ctx.author.roles]:
+    if ROLE_IDS[1476456408122921112] not in [r.id for r in ctx.author.roles]:
         await ctx.send("Solo el Presidente puede asignar roles.")
         return
 
     if rol not in ROLE_IDS:
-        await ctx.send("Rol inválido. Usa: presidente, director_medico, medico")
+        await ctx.send("Rol inválido. Usa: presidente, director_general")
         return
 
     role_obj = ctx.guild.get_role(ROLE_IDS[rol])
